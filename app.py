@@ -15,11 +15,11 @@ st.write("Herramienta para la transformación de datos, generación de archivos 
 # -------------------------------------------------------------
 st.subheader("1. CARGA DE ARCHIVOS DE ENTRADA")
 
-# Instrucción clara para el archivo de Packing List
 st.info(
     "📋 **Nota sobre el Packing List:** "
     "Asegúrese de que la estructura de columnas sea: "
     "**N° Importación | Código | Color | Descripción | Cantidad** (en ese orden). "
+    "Todos los campos deben estar completos (sin celdas en blanco). "
     "El Maestro de Códigos y el Reporte de Stock se cargan tal como se descargan del sistema."
 )
 
@@ -54,7 +54,7 @@ if st.button("🚀 Procesar y Generar Archivos", type="primary"):
     else:
         try:
             # -------------------------------------------------------------
-            # LECTURA Y PREPARACIÓN DE DATOS (TEXTO / STR)
+            # LECTURA DE ARCHIVOS
             # -------------------------------------------------------------
             if archivo_packing.name.endswith('.xlsx'):
                 df_packing = pd.read_excel(archivo_packing, dtype=str)
@@ -66,36 +66,65 @@ if st.button("🚀 Procesar y Generar Archivos", type="primary"):
             else:
                 df_maestro = pd.read_csv(archivo_maestro, dtype=str)
 
-            # Limpieza de espacios en columnas
+            # Limpieza de espacios en encabezados
             df_packing.columns = df_packing.columns.str.strip()
             df_maestro.columns = df_maestro.columns.str.strip()
             
-            # Mapeo por posición de columna del Packing List
+            # Mapeo por posición de columna
             imp_col = df_packing.columns[0]
             cod_col = df_packing.columns[1]
             col_col = df_packing.columns[2]
             des_col = df_packing.columns[3]
             qty_col = df_packing.columns[4]
 
-            # Limpieza estricta de cadenas y preservación de ceros
-            df_packing[imp_col] = df_packing[imp_col].astype(str).str.strip()
-            df_packing[cod_col] = df_packing[cod_col].astype(str).str.strip()
-            
+            # -------------------------------------------------------------
+            # VALIDACIÓN ESTRICTA DE CAMPOS VACÍOS EN PACKING LIST
+            # -------------------------------------------------------------
+            # Crear copias limpias para comprobar celdas vacías o con puros espacios
+            c_imp = df_packing[imp_col].fillna('').astype(str).str.strip()
+            c_cod = df_packing[cod_col].fillna('').astype(str).str.strip()
+            c_col = df_packing[col_col].fillna('').astype(str).str.strip()
+            c_des = df_packing[des_col].fillna('').astype(str).str.strip()
+            c_qty = pd.to_numeric(df_packing[qty_col], errors='coerce').fillna(0)
+
+            # Detectar filas con vacíos o cantidades invalidas (<= 0)
+            mask_vacios = (c_imp == '') | (c_cod == '') | (c_col == '') | (c_des == '') | (c_qty <= 0)
+            filas_con_error = df_packing[mask_vacios]
+
+            if not filas_con_error.empty:
+                st.error(
+                    f"⛔ **Proceso detenido:** Se detectaron **{len(filas_con_error)}** fila(s) con campos en blanco o cantidades inválidas en el **Packing List**.\n\n"
+                    "Por favor, revise y complete el archivo Excel antes de volver a subirlo."
+                )
+                
+                # Mostrar vista previa de las filas con vacíos para facilitar la corrección
+                with st.expander("🔍 Ver filas con campos vacíos o errores para corregir"):
+                    st.dataframe(filas_con_error[[imp_col, cod_col, col_col, des_col, qty_col]], use_container_width=True)
+                
+                st.stop() # Interrumpe la ejecución para que no genere archivos
+
+            # -------------------------------------------------------------
+            # PROCESAMIENTO DE DATOS (SI TODO ESTÁ CORRECTO)
+            # -------------------------------------------------------------
+            df_packing[imp_col] = c_imp
+            df_packing[cod_col] = c_cod
+            df_packing[col_col] = c_col
+            df_packing[des_col] = c_des
+            df_packing['Qty_Int'] = c_qty.astype(int)
+
             # Preservar exactamente 3 dígitos de color (ej. 1 -> 001, 56 -> 056)
-            df_packing['Color_Limpio'] = df_packing[col_col].astype(str).str.strip().apply(lambda x: x.zfill(3) if x.isdigit() else x)
-            df_packing[des_col] = df_packing[des_col].astype(str).str.strip()
-            df_packing['Qty_Int'] = pd.to_numeric(df_packing[qty_col], errors='coerce').fillna(0).astype(int)
+            df_packing['Color_Limpio'] = df_packing[col_col].apply(lambda x: x.zfill(3) if x.isdigit() else x)
 
             # Código concatenado para WMS (ejemplo: 185649 + 056 = 185649056)
             df_packing['Codigo_WMS'] = df_packing[cod_col] + df_packing['Color_Limpio']
 
             # Cargar Maestro para validación
             col_maestro_cod = df_maestro.columns[0]
-            codigos_maestro_set = set(df_maestro[col_maestro_cod].astype(str).str.strip())
+            codigos_maestro_set = set(df_maestro[col_maestro_cod].fillna('').astype(str).str.strip())
 
             archivos_para_descarga = {}
 
-            st.success("✅ Archivos procesados correctamente.")
+            st.success("✅ Archivos procesados correctamente sin errores de vacíos.")
 
             # -------------------------------------------------------------
             # SECCIÓN 2: INFORME DE ARCHIVOS PROCESADOS (COMPACTO)
@@ -213,8 +242,8 @@ if st.button("🚀 Procesar y Generar Archivos", type="primary"):
                 col_stock_ubi = 'Ubicación' if 'Ubicación' in df_stock.columns else df_stock.columns[5]
                 col_stock_cant = 'Stock Físico' if 'Stock Físico' in df_stock.columns else df_stock.columns[9]
 
-                df_stock[col_stock_cod] = df_stock[col_stock_cod].astype(str).str.strip()
-                df_stock[col_stock_ubi] = df_stock[col_stock_ubi].astype(str).str.strip()
+                df_stock[col_stock_cod] = df_stock[col_stock_cod].fillna('').astype(str).str.strip()
+                df_stock[col_stock_ubi] = df_stock[col_stock_ubi].fillna('').astype(str).str.strip()
                 df_stock['Stock_Num'] = pd.to_numeric(df_stock[col_stock_cant], errors='coerce').fillna(0)
 
                 # Filtrar exclusiones (C1-DSP-1 y C1-REC-1) y stock <= 0
